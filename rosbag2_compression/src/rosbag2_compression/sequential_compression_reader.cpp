@@ -90,6 +90,13 @@ void SequentialCompressionReader::preprocess_current_file()
   }
 
   if (compression_mode_ == CompressionMode::FILE) {
+    const auto decompressed_file =
+      rcpputils::fs::remove_extension(rcpputils::fs::path{get_current_file()});
+    if (decompressed_file.exists()) {
+      *current_file_iterator_ = decompressed_file.string();
+      return;
+    }
+
     ROSBAG2_COMPRESSION_LOG_INFO_STREAM("Decompressing " << get_current_file().c_str());
     *current_file_iterator_ = decompressor_->decompress_uri(get_current_file());
   }

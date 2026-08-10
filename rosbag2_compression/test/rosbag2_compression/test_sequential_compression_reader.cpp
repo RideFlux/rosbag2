@@ -242,6 +242,34 @@ TEST_F(SequentialCompressionReaderTest, compression_called_when_loading_split_ba
   compression_reader->read_next();  // calls has_next true
 }
 
+TEST_F(SequentialCompressionReaderTest, uses_existing_decompressed_file)
+{
+  metadata_.relative_file_paths = {"lidar.mcap." + std::string(DefaultTestCompressor)};
+  std::ofstream compressed((tmp_dir_ / metadata_.relative_file_paths[0]).string());
+  compressed << "Compressed storage data" << std::endl;
+
+  const auto decompressed_path =
+    rcpputils::fs::remove_extension(tmp_dir_ / metadata_.relative_file_paths[0]);
+  std::ofstream output(decompressed_path.string());
+  output << "Already decompressed storage data" << std::endl;
+
+  auto decompressor = std::make_unique<NiceMock<MockDecompressor>>();
+  EXPECT_CALL(*decompressor, decompress_uri(_)).Times(0);
+
+  auto compression_factory = std::make_unique<StrictMock<MockCompressionFactory>>();
+  ON_CALL(*compression_factory, create_decompressor(_))
+  .WillByDefault(Return(ByMove(std::move(decompressor))));
+  EXPECT_CALL(*compression_factory, create_decompressor(_)).Times(1);
+
+  auto compression_reader = std::make_unique<rosbag2_compression::SequentialCompressionReader>(
+    std::move(compression_factory),
+    std::move(storage_factory_),
+    converter_factory_,
+    std::move(metadata_io_));
+
+  compression_reader->open(storage_options_, converter_options_);
+}
+
 TEST_F(SequentialCompressionReaderTest, can_find_v4_names)
 {
   auto reader = create_reader();

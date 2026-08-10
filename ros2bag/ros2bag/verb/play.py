@@ -15,12 +15,14 @@
 from argparse import FileType
 
 from rclpy.qos import InvalidQoSProfileException
-from ros2bag.api import add_standard_reader_args
+from ros2bag.api import add_standard_multi_reader_args
 from ros2bag.api import check_not_negative_float
 from ros2bag.api import check_not_negative_int
 from ros2bag.api import check_positive_float
 from ros2bag.api import convert_yaml_to_qos_profile
+from ros2bag.api import input_bag_arg_to_storage_options
 from ros2bag.api import print_error
+from ros2bag.api import print_warn
 from ros2bag.verb import VerbExtension
 from ros2cli.node import NODE_NAME_PREFIX
 from rosbag2_py import Player
@@ -40,7 +42,7 @@ class PlayVerb(VerbExtension):
     """Play back ROS data from a bag."""
 
     def add_arguments(self, parser, cli_name):  # noqa: D102
-        add_standard_reader_args(parser)
+        add_standard_multi_reader_args(parser)
         parser.add_argument(
             '--read-ahead-queue-size', type=int, default=1000,
             help='size of message queue rosbag tries to hold in memory to help deterministic '
@@ -109,6 +111,9 @@ class PlayVerb(VerbExtension):
             '--log-level', type=str, default='info',
             choices=['debug', 'info', 'warn', 'error', 'fatal'],
             help='Logging level.')
+        parser.add_argument(
+            '--node', type=str, default='ros2cli',
+            help='Name of the node created to play the bag.')
 
     def main(self, *, args):  # noqa: D102
         qos_profile_overrides = {}  # Specify a valid default
@@ -129,14 +134,31 @@ class PlayVerb(VerbExtension):
             topic_remapping.append('--remap')
             topic_remapping.append(remap_rule)
 
-        storage_options = StorageOptions(
-            uri=args.bag_path,
-            storage_id=args.storage,
-            storage_config_uri=storage_config_file,
-        )
+        if args.bag_path and args.input:
+            return print_error(
+                'do not mix the [bag_path] positional argument and the -i,--input option; '
+                'for multiple input bags, use -i,--input multiple times')
+
+        storage_options = []
+        if args.bag_path:
+            storage_options.append(StorageOptions(
+                uri=args.bag_path,
+                storage_id=args.storage,
+                storage_config_uri=storage_config_file,
+            ))
+            if args.storage:
+                print(print_warn('--storage is deprecated; use --input URI STORAGE_ID'))
+        try:
+            storage_options.extend(
+                input_bag_arg_to_storage_options(args.input or [], storage_config_file))
+        except ValueError as e:
+            return print_error(str(e))
+        if not storage_options:
+            return print_error('no input bags were provided')
+
         play_options = PlayOptions()
         play_options.read_ahead_queue_size = args.read_ahead_queue_size
-        play_options.node_prefix = NODE_NAME_PREFIX
+        play_options.node_prefix = args.node or NODE_NAME_PREFIX
         play_options.rate = args.rate
         play_options.topics_to_filter = args.topics
         play_options.topic_qos_profile_overrides = qos_profile_overrides
@@ -152,6 +174,8 @@ class PlayVerb(VerbExtension):
 
         player = Player(args.log_level)
         try:
-            player.play(storage_options, play_options)
+            player.play(
+                storage_options[0] if len(storage_options) == 1 else storage_options,
+                play_options)
         except KeyboardInterrupt:
             pass

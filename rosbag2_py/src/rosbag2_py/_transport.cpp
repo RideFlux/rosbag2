@@ -16,6 +16,7 @@
 #include <csignal>
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -24,6 +25,7 @@
 #include "rosbag2_storage/storage_options.hpp"
 #include "rosbag2_storage/yaml.hpp"
 #include "rosbag2_transport/bag_rewrite.hpp"
+#include "rosbag2_transport/merged_sequential_reader.hpp"
 #include "rosbag2_transport/play_options.hpp"
 #include "rosbag2_transport/player.hpp"
 #include "rosbag2_transport/reader_writer_factory.hpp"
@@ -155,8 +157,31 @@ public:
     PlayOptions & play_options)
   {
     auto reader = rosbag2_transport::ReaderWriterFactory::make_reader(storage_options);
+    play_with_reader(std::move(reader), storage_options, play_options);
+  }
+
+  void play(
+    const std::vector<rosbag2_storage::StorageOptions> & storage_options,
+    PlayOptions & play_options)
+  {
+    if (storage_options.empty()) {
+      throw std::runtime_error("No input bags were provided.");
+    }
+    auto reader = std::make_unique<rosbag2_cpp::Reader>(
+      std::make_unique<rosbag2_transport::MergedSequentialReader>(storage_options));
+    play_with_reader(std::move(reader), storage_options.front(), play_options);
+  }
+
+private:
+  void play_with_reader(
+    std::unique_ptr<rosbag2_cpp::Reader> reader,
+    const rosbag2_storage::StorageOptions & storage_options,
+    PlayOptions & play_options)
+  {
+    const auto node_name = play_options.node_prefix.empty() ?
+      "rosbag2_player" : play_options.node_prefix;
     auto player = std::make_shared<rosbag2_transport::Player>(
-      std::move(reader), storage_options, play_options);
+      std::move(reader), storage_options, play_options, node_name);
 
     rclcpp::executors::SingleThreadedExecutor exec;
     exec.add_node(player);
@@ -370,7 +395,14 @@ PYBIND11_MODULE(_transport, m) {
   py::class_<rosbag2_py::Player>(m, "Player")
   .def(py::init())
   .def(py::init<const std::string &>())
-  .def("play", &rosbag2_py::Player::play)
+  .def(
+    "play",
+    py::overload_cast<const rosbag2_storage::StorageOptions &, PlayOptions &>(
+      &rosbag2_py::Player::play))
+  .def(
+    "play",
+    py::overload_cast<const std::vector<rosbag2_storage::StorageOptions> &, PlayOptions &>(
+      &rosbag2_py::Player::play))
   ;
 
   py::class_<rosbag2_py::Recorder>(m, "Recorder")

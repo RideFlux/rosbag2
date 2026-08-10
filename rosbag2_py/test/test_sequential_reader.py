@@ -14,6 +14,8 @@
 
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 from common import get_rosbag_options
 
@@ -140,3 +142,30 @@ def test_sequential_reader_seek():
 def test_plugin_list():
     reader_plugins = rosbag2_py.get_registered_readers()
     assert 'my_read_only_test_plugin' in reader_plugins
+
+
+def test_fresh_import_can_enumerate_storage_plugins():
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            (
+                'import os, sys; '
+                'os.environ.get("ROSBAG2_PY_TEST_WITH_RTLD_GLOBAL", None) '
+                'is not None and sys.setdlopenflags('
+                'os.RTLD_GLOBAL | os.RTLD_LAZY); '
+                'import rosbag2_py; '
+                'readers = rosbag2_py.get_registered_readers(); '
+                'writers = rosbag2_py.get_registered_writers(); '
+                'rosbag2_py.SequentialReader(); '
+                'rosbag2_py.SequentialWriter(); '
+                'print(readers); print(writers)'
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count('sqlite3') == 2

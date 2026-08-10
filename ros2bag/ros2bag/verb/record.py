@@ -15,6 +15,7 @@
 from argparse import FileType
 import datetime
 import os
+import shutil
 
 from rclpy.qos import InvalidQoSProfileException
 from ros2bag.api import convert_yaml_to_qos_profile
@@ -77,6 +78,9 @@ class RecordVerb(VerbExtension):
             '-o', '--output',
             help='destination of the bagfile to create, \
             defaults to a timestamped folder in the current directory')
+        parser.add_argument(
+            '--overwrite', action='store_true',
+            help='Overwrite the output folder, deleting a previous recording at that path.')
         parser.add_argument(
             '-s', '--storage', default=default_writer, choices=writer_choices,
             help=f"storage identifier to be used, defaults to '{default_writer}'")
@@ -197,7 +201,9 @@ class RecordVerb(VerbExtension):
         uri = args.output or datetime.datetime.now().strftime('rosbag2_%Y_%m_%d-%H_%M_%S')
 
         if os.path.isdir(uri):
-            return print_error("Output folder '{}' already exists.".format(uri))
+            if not args.overwrite:
+                return print_error("Output folder '{}' already exists.".format(uri))
+            shutil.rmtree(uri)
 
         if args.compression_format and args.compression_mode == 'none':
             return print_error('Invalid choice: Cannot specify compression format '
