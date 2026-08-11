@@ -16,6 +16,7 @@ from argparse import ArgumentParser, ArgumentTypeError
 import os
 from typing import Any
 from typing import Dict
+from typing import List
 from typing import Optional
 
 from rclpy.duration import Duration
@@ -39,6 +40,10 @@ _VALUE_KEYS = ['depth', 'avoid_ros_namespace_conventions']
 
 def print_error(string: str) -> str:
     return '[ERROR] [ros2bag]: {}'.format(string)
+
+
+def print_warn(string: str) -> str:
+    return '[WARN] [ros2bag]: {}'.format(string)
 
 
 def dict_to_duration(time_dict: Optional[Dict[str, int]]) -> Duration:
@@ -140,3 +145,45 @@ def add_standard_reader_args(parser: ArgumentParser) -> None:
         '-s', '--storage', default='', choices=reader_choices,
         help='Storage implementation of bag. '
              'By default attempts to detect automatically - use this argument to override.')
+
+
+def add_standard_multi_reader_args(parser: ArgumentParser) -> None:
+    """Add arguments for one or more input bags."""
+    reader_choices = rosbag2_py.get_registered_readers()
+    parser.add_argument(
+        'bag_path', nargs='?', type=check_path_exists,
+        help='Bag to open. Use --input to provide more than one bag.')
+    parser.add_argument(
+        '-s', '--storage', default='', choices=reader_choices,
+        help='Storage implementation of bag. '
+             '(deprecated: use --input to provide a bag with a specific storage ID)')
+    parser.add_argument(
+        '-i', '--input', action='append', nargs='+', metavar=('uri', 'storage_id'),
+        help='URI and optional storage ID of an input bag. May be provided more than once.')
+
+
+def input_bag_arg_to_storage_options(
+    input_arg: List[List[str]],
+    storage_config_file: Optional[str] = None,
+) -> List[rosbag2_py.StorageOptions]:
+    """Convert repeated --input values to StorageOptions."""
+    if storage_config_file and not os.path.exists(storage_config_file):
+        raise ValueError(f"File '{storage_config_file}' does not exist!")
+    storage_id_options = rosbag2_py.get_registered_readers()
+    storage_options = []
+    for input_bag_info in input_arg:
+        if len(input_bag_info) > 2:
+            raise ValueError(
+                f'--input expects 1 or 2 arguments, {len(input_bag_info)} provided')
+        bag_path = input_bag_info[0]
+        if not os.path.exists(bag_path):
+            raise ValueError(f"Bag path '{bag_path}' does not exist!")
+        storage_id = input_bag_info[1] if len(input_bag_info) > 1 else ''
+        if storage_id and storage_id not in storage_id_options:
+            raise ValueError(
+                f"Unknown storage ID '{storage_id}', options are: {', '.join(storage_id_options)}")
+        options = rosbag2_py.StorageOptions(uri=bag_path, storage_id=storage_id)
+        if storage_config_file:
+            options.storage_config_uri = storage_config_file
+        storage_options.append(options)
+    return storage_options

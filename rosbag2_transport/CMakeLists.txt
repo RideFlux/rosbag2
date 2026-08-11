@@ -38,6 +38,7 @@ find_package(yaml_cpp_vendor REQUIRED)
 
 add_library(${PROJECT_NAME} SHARED
   src/rosbag2_transport/bag_rewrite.cpp
+  src/rosbag2_transport/merged_sequential_reader.cpp
   src/rosbag2_transport/player.cpp
   src/rosbag2_transport/qos.cpp
   src/rosbag2_transport/reader_writer_factory.cpp
@@ -86,6 +87,7 @@ ament_export_targets(export_${PROJECT_NAME})
 
 ament_export_dependencies(
   keyboard_handler
+  rclcpp
   rosbag2_cpp
   rosbag2_compression
   rosbag2_interfaces
@@ -250,6 +252,17 @@ if(BUILD_TESTING)
   ament_target_dependencies(
     test_rewrite
     keyboard_handler
+    rcpputils
+    rosbag2_cpp
+    rosbag2_test_common
+    test_msgs
+  )
+
+  ament_add_gmock(test_merged_sequential_reader
+    test/rosbag2_transport/test_merged_sequential_reader.cpp)
+  target_link_libraries(test_merged_sequential_reader ${PROJECT_NAME})
+  ament_target_dependencies(
+    test_merged_sequential_reader
     rcpputils
     rosbag2_cpp
     rosbag2_test_common
