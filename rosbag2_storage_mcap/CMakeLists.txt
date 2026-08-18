@@ -31,7 +31,7 @@ add_library(${PROJECT_NAME} SHARED
 )
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
+  $<INSTALL_INTERFACE:include>
 )
 target_compile_features(${PROJECT_NAME} PUBLIC c_std_99 cxx_std_17)
 target_compile_definitions(${PROJECT_NAME} PRIVATE "ROSBAG2_STORAGE_MCAP_BUILDING_DLL")
@@ -80,6 +80,7 @@ install(
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
+install(DIRECTORY include/ DESTINATION include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gmock REQUIRED)
