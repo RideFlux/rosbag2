@@ -127,6 +127,8 @@ protected:
   std::atomic<bool> stop_discovery_;
 
 private:
+  friend class RecorderTestAccess;
+
   void topics_discovery();
 
   std::unordered_map<std::string, std::string>

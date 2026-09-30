@@ -14,6 +14,8 @@
 
 #include <gmock/gmock.h>
 
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,6 +34,58 @@
 
 #include "rosbag2_transport/qos.hpp"
 #include "record_integration_fixture.hpp"
+
+namespace rosbag2_transport
+{
+
+class RecorderTestAccess
+{
+public:
+  static void set_discovery_future(Recorder & recorder, std::future<void> discovery_future)
+  {
+    recorder.event_publisher_thread_should_exit_ = false;
+    recorder.discovery_future_ = std::move(discovery_future);
+  }
+};
+
+}  // namespace rosbag2_transport
+
+class RecorderTest : public RecordIntegrationTestFixture
+{
+};
+
+TEST_F(RecorderTest, stop_waits_for_running_discovery_before_tearing_down_subscriptions)
+{
+  rosbag2_transport::RecordOptions record_options = {false, false, {}, "rmw_format", 100ms};
+  auto recorder = std::make_shared<rosbag2_transport::Recorder>(
+    std::move(writer_), storage_options_, record_options);
+  auto & mock_writer = dynamic_cast<MockSequentialWriter &>(
+    recorder->get_writer_handle().get_implementation_handle());
+
+  std::promise<void> discovery_started;
+  std::promise<void> allow_discovery_to_finish;
+  auto allow_discovery_to_finish_future = allow_discovery_to_finish.get_future();
+
+  auto discovery_future = std::async(
+    std::launch::async,
+    [&discovery_started, &allow_discovery_to_finish_future]() {
+      discovery_started.set_value();
+      allow_discovery_to_finish_future.wait();
+    });
+  rosbag2_transport::RecorderTestAccess::set_discovery_future(
+    *recorder, std::move(discovery_future));
+  discovery_started.get_future().wait();
+
+  auto stop_future = std::async(std::launch::async, [&recorder]() {recorder->stop();});
+
+  EXPECT_EQ(stop_future.wait_for(300ms), std::future_status::timeout);
+  EXPECT_FALSE(mock_writer.closed_was_called());
+
+  allow_discovery_to_finish.set_value();
+  EXPECT_EQ(stop_future.wait_for(1s), std::future_status::ready);
+  EXPECT_NO_THROW(stop_future.get());
+  EXPECT_TRUE(mock_writer.closed_was_called());
+}
 
 TEST_F(RecordIntegrationTestFixture, published_messages_from_multiple_topics_are_recorded)
 {
