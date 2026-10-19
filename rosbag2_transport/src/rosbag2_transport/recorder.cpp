@@ -348,6 +348,10 @@ void Recorder::subscribe_topics(
   const std::unordered_map<std::string, std::string> & topics_and_types)
 {
   for (const auto & topic_with_type : topics_and_types) {
+    // Disabled discovery still needs the initial subscriptions made by record().
+    if (!record_options_.is_discovery_disabled && stop_discovery_) {
+      return;
+    }
     subscribe_topic(
       {
         topic_with_type.first,
