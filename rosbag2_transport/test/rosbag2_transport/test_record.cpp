@@ -14,6 +14,9 @@
 
 #include <gmock/gmock.h>
 
+#include <chrono>
+#include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,6 +35,113 @@
 
 #include "rosbag2_transport/qos.hpp"
 #include "record_integration_fixture.hpp"
+
+namespace rosbag2_transport
+{
+
+class RecorderTestAccess
+{
+public:
+  static void set_discovery_future(Recorder & recorder, std::future<void> discovery_future)
+  {
+    recorder.event_publisher_thread_should_exit_ = false;
+    recorder.discovery_future_ = std::move(discovery_future);
+  }
+
+  static void request_stop(Recorder & recorder)
+  {
+    recorder.stop_discovery_ = true;
+  }
+
+  static void subscribe_topics(
+    Recorder & recorder, const std::unordered_map<std::string, std::string> & topics)
+  {
+    recorder.subscribe_topics(topics);
+  }
+};
+
+}  // namespace rosbag2_transport
+
+class RecorderTest : public RecordIntegrationTestFixture
+{
+};
+
+TEST_F(RecorderTest, stop_finishes_discovery_before_releasing_subscriptions_and_writer)
+{
+  rosbag2_transport::RecordOptions record_options = {false, false, {}, "rmw_format", 100ms};
+  auto recorder = std::make_shared<rosbag2_transport::Recorder>(
+    std::move(writer_), storage_options_, record_options);
+  auto & mock_writer = dynamic_cast<MockSequentialWriter &>(
+    recorder->get_writer_handle().get_implementation_handle());
+
+  rosbag2_transport::RecorderTestAccess::subscribe_topics(
+    *recorder, {{"/discovery_shutdown_test", "test_msgs/msg/Strings"}});
+  std::weak_ptr<rclcpp::GenericSubscription> subscription =
+    recorder->subscriptions().at("/discovery_shutdown_test");
+
+  bool discovery_finished = false;
+  // Deferred work makes the ordering check independent of thread scheduling:
+  // wait() runs discovery, whereas the old timed wait leaves it unexecuted.
+  auto discovery_future = std::async(
+    std::launch::deferred,
+    [&]() {
+      EXPECT_FALSE(subscription.expired());
+      EXPECT_FALSE(mock_writer.closed_was_called());
+      discovery_finished = true;
+    });
+  rosbag2_transport::RecorderTestAccess::set_discovery_future(
+    *recorder, std::move(discovery_future));
+
+  recorder->stop();
+
+  EXPECT_TRUE(discovery_finished);
+  EXPECT_TRUE(subscription.expired());
+  EXPECT_TRUE(mock_writer.closed_was_called());
+}
+
+TEST_F(RecorderTest, discovery_stops_subscribing_after_stop_request)
+{
+  class StopDiscoveryWriter : public MockSequentialWriter
+  {
+public:
+    std::function<void()> request_stop;
+
+    void create_topic(const rosbag2_storage::TopicMetadata & topic) override
+    {
+      MockSequentialWriter::create_topic(topic);
+      request_stop();
+    }
+  };
+
+  auto writer_impl = std::make_unique<StopDiscoveryWriter>();
+  auto & mock_writer = *writer_impl;
+  auto writer = std::make_shared<rosbag2_cpp::Writer>(std::move(writer_impl));
+  rosbag2_transport::RecordOptions record_options = {false, false, {}, "rmw_format", 100ms};
+  auto recorder = std::make_shared<rosbag2_transport::Recorder>(
+    writer, storage_options_, record_options);
+  mock_writer.request_stop = [&]() {
+      rosbag2_transport::RecorderTestAccess::request_stop(*recorder);
+    };
+
+  rosbag2_transport::RecorderTestAccess::subscribe_topics(
+    *recorder, {{"/first", "test_msgs/msg/Strings"}, {"/second", "test_msgs/msg/Strings"},
+      {"/third", "test_msgs/msg/Strings"}});
+
+  EXPECT_EQ(mock_writer.get_topics().size(), 1u);
+  EXPECT_EQ(recorder->subscriptions().size(), 1u);
+}
+
+TEST_F(RecorderTest, disabled_discovery_still_subscribes_to_initial_topics)
+{
+  rosbag2_transport::RecordOptions record_options = {false, true, {}, "rmw_format", 100ms};
+  auto recorder = std::make_shared<rosbag2_transport::Recorder>(
+    std::move(writer_), storage_options_, record_options);
+
+  rosbag2_transport::RecorderTestAccess::subscribe_topics(
+    *recorder, {{"/first", "test_msgs/msg/Strings"}, {"/second", "test_msgs/msg/Strings"}});
+
+  EXPECT_EQ(recorder->subscriptions().size(), 2u);
+}
 
 TEST_F(RecordIntegrationTestFixture, published_messages_from_multiple_topics_are_recorded)
 {

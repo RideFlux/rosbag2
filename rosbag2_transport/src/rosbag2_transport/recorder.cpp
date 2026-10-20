@@ -123,13 +123,8 @@ void Recorder::stop()
   }
   stop_discovery_ = true;
   if (discovery_future_.valid()) {
-    auto status = discovery_future_.wait_for(2 * record_options_.topic_polling_interval);
-    if (status != std::future_status::ready) {
-      RCLCPP_ERROR_STREAM(
-        get_logger(),
-        "discovery_future_.wait_for(" << record_options_.topic_polling_interval.count() <<
-          ") return status: " << (status == std::future_status::timeout ? "timeout" : "deferred"));
-    }
+    // Discovery accesses subscriptions_ and writer_, so it must finish before they are released.
+    discovery_future_.wait();
   }
   paused_ = true;
   subscriptions_.clear();
@@ -297,9 +292,18 @@ void Recorder::topics_discovery()
     try {
       auto topics_to_subscribe = get_requested_or_available_topics();
       for (const auto & topic_and_type : topics_to_subscribe) {
+        if (stop_discovery_) {
+          return;
+        }
         warn_if_new_qos_for_subscribed_topic(topic_and_type.first);
       }
+      if (stop_discovery_) {
+        return;
+      }
       auto missing_topics = get_missing_topics(topics_to_subscribe);
+      if (stop_discovery_) {
+        return;
+      }
       subscribe_topics(missing_topics);
 
       if (!record_options_.topics.empty() &&
@@ -344,6 +348,10 @@ void Recorder::subscribe_topics(
   const std::unordered_map<std::string, std::string> & topics_and_types)
 {
   for (const auto & topic_with_type : topics_and_types) {
+    // Disabled discovery still needs the initial subscriptions made by record().
+    if (!record_options_.is_discovery_disabled && stop_discovery_) {
+      return;
+    }
     subscribe_topic(
       {
         topic_with_type.first,
